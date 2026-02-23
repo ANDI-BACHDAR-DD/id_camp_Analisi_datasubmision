@@ -6,6 +6,7 @@ import os
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
 
 # =========================
 # CONFIG
@@ -27,12 +28,19 @@ day_df["dteday"] = pd.to_datetime(day_df["dteday"])
 day_df["year"] = day_df["dteday"].dt.year
 day_df["month"] = day_df["dteday"].dt.month_name()
 
-# Mapping kategori
+# Mapping kategori (sama dengan Colab)
 day_df["season"] = day_df["season"].map({
     1: "Spring",
     2: "Summer",
     3: "Fall",
     4: "Winter"
+})
+
+day_df["weathersit"] = day_df["weathersit"].map({
+    1: "Clear",
+    2: "Mist",
+    3: "Light Rain/Snow",
+    4: "Heavy Rain/Snow"
 })
 
 day_df["workingday"] = day_df["workingday"].map({
@@ -45,23 +53,13 @@ day_df["workingday"] = day_df["workingday"].map({
 # =========================
 st.sidebar.header("Filter Data")
 
-year_filter = st.sidebar.selectbox(
-    "Pilih Tahun",
-    sorted(day_df["year"].unique())
-)
-
-season_filter = st.sidebar.multiselect(
-    "Pilih Musim",
-    day_df["season"].unique(),
-    default=day_df["season"].unique()
-)
-
-workingday_filter = st.sidebar.multiselect(
-    "Pilih Jenis Hari",
-    day_df["workingday"].unique(),
-    default=day_df["workingday"].unique()
-)
-
+year_filter = st.sidebar.selectbox("Pilih Tahun", sorted(day_df["year"].unique()))
+season_filter = st.sidebar.multiselect("Pilih Musim",
+                                       day_df["season"].unique(),
+                                       default=day_df["season"].unique())
+workingday_filter = st.sidebar.multiselect("Pilih Jenis Hari",
+                                           day_df["workingday"].unique(),
+                                           default=day_df["workingday"].unique())
 cluster_k = st.sidebar.slider("Jumlah Cluster (KMeans)", 2, 6, 3)
 
 year_df = day_df[day_df["year"] == year_filter]
@@ -86,117 +84,124 @@ filtered_df = day_df[
 ].copy()
 
 # =========================
-# TITLE & KPI
+# KPI
 # =========================
-st.title("🚲 Bike Sharing Expert Analytics Dashboard")
+st.title("🚲 Bike Sharing 5-Star Analytics Dashboard")
 
 col1, col2, col3 = st.columns(3)
-
 col1.metric("Total Peminjaman", f"{int(filtered_df['cnt'].sum()):,}")
 col2.metric("Rata-rata Harian", f"{int(filtered_df['cnt'].mean()):,}")
 col3.metric("Hari Observasi", len(filtered_df))
 
 # =========================
-# TIME SERIES + MOVING AVG
+# TREND + MA7
 # =========================
-st.subheader("Trend Peminjaman Harian + Moving Average")
+st.subheader("Trend Peminjaman + Moving Average")
 
-time_series = filtered_df.groupby("dteday")["cnt"].sum().reset_index()
-time_series["MA7"] = time_series["cnt"].rolling(7).mean()
+ts = filtered_df.groupby("dteday")["cnt"].sum().reset_index()
+ts["MA7"] = ts["cnt"].rolling(7).mean()
 
 fig_trend = go.Figure()
-fig_trend.add_trace(go.Scatter(x=time_series["dteday"], y=time_series["cnt"], name="Actual"))
-fig_trend.add_trace(go.Scatter(x=time_series["dteday"], y=time_series["MA7"], name="MA 7 Hari"))
-
+fig_trend.add_trace(go.Scatter(x=ts["dteday"], y=ts["cnt"], name="Actual"))
+fig_trend.add_trace(go.Scatter(x=ts["dteday"], y=ts["MA7"], name="MA7"))
 st.plotly_chart(fig_trend, use_container_width=True)
 
 # =========================
-# SCATTER PLOTS
+# MONTHLY BARCHART
 # =========================
-colA, colB = st.columns(2)
+st.subheader("Rata-rata Rental per Bulan")
 
-with colA:
-    st.subheader("Temp vs Rentals")
-    fig_temp = px.scatter(filtered_df, x="temp", y="cnt",
-                          color="season", size="cnt", opacity=0.7)
-    st.plotly_chart(fig_temp, use_container_width=True)
+monthly_avg = filtered_df.groupby("month")["cnt"].mean().reset_index()
+month_order = ["January","February","March","April","May","June",
+               "July","August","September","October","November","December"]
 
-with colB:
-    st.subheader("Humidity vs Rentals")
-    fig_hum = px.scatter(filtered_df, x="hum", y="cnt",
-                         color="workingday", size="cnt", opacity=0.7)
-    st.plotly_chart(fig_hum, use_container_width=True)
+monthly_avg["month"] = pd.Categorical(monthly_avg["month"],
+                                      categories=month_order,
+                                      ordered=True)
+monthly_avg = monthly_avg.sort_values("month")
 
-# =========================
-# DISTRIBUTION
-# =========================
-colC, colD = st.columns(2)
-
-with colC:
-    st.subheader("Box Plot per Musim")
-    fig_box = px.box(filtered_df, x="season", y="cnt", color="season")
-    st.plotly_chart(fig_box, use_container_width=True)
-
-with colD:
-    st.subheader("Violin Plot per Musim")
-    fig_violin = px.violin(filtered_df, x="season", y="cnt",
-                           color="season", box=True)
-    st.plotly_chart(fig_violin, use_container_width=True)
-
-st.subheader("Histogram Distribusi Rentals")
-fig_hist = px.histogram(filtered_df, x="cnt", nbins=30, marginal="box")
-st.plotly_chart(fig_hist, use_container_width=True)
+fig_month = px.bar(monthly_avg, x="month", y="cnt", text="cnt")
+fig_month.update_traces(texttemplate="%{text:.0f}", textposition="outside")
+st.plotly_chart(fig_month, use_container_width=True)
 
 # =========================
-# HEATMAP
+# SEASON INDEX
 # =========================
-st.subheader("Heatmap Korelasi")
+st.subheader("Seasonal Index")
 
-corr = filtered_df[["temp", "hum", "windspeed", "cnt"]].corr()
+season_avg = filtered_df.groupby("season")["cnt"].mean()
+overall = filtered_df["cnt"].mean()
+season_index = (season_avg / overall).reset_index()
+season_index.columns = ["season","index"]
 
-fig_heat = go.Figure(data=go.Heatmap(
-    z=corr.values,
-    x=corr.columns,
-    y=corr.columns,
-    colorscale="Blues",
-    text=corr.values.round(2),
-    texttemplate="%{text}"
-))
-
-st.plotly_chart(fig_heat, use_container_width=True)
+fig_season = px.bar(season_index, x="season", y="index", text="index", color="season")
+fig_season.update_traces(texttemplate="%{text:.2f}", textposition="outside")
+st.plotly_chart(fig_season, use_container_width=True)
 
 # =========================
-# TOP 10
+# WEATHER VS RENTAL (BAR)
 # =========================
-st.subheader("Top 10 Hari Tertinggi")
+st.subheader("Rata-rata Rental per Cuaca")
 
-top10 = filtered_df.sort_values("cnt", ascending=False).head(10)
-fig_top = px.bar(top10, x="dteday", y="cnt", text="cnt")
-fig_top.update_traces(textposition="outside")
-st.plotly_chart(fig_top, use_container_width=True)
+weather_avg = filtered_df.groupby("weathersit")["cnt"].mean().reset_index()
+fig_weather = px.bar(weather_avg, x="weathersit", y="cnt", text="cnt", color="weathersit")
+fig_weather.update_traces(texttemplate="%{text:.0f}", textposition="outside")
+st.plotly_chart(fig_weather, use_container_width=True)
 
 # =========================
-# ELBOW METHOD
+# SCATTER MULTI VARIABLE
 # =========================
-st.subheader("Elbow Method")
+st.subheader("Temperature vs Rental (Colored by Season)")
 
-features = filtered_df[["temp", "hum", "windspeed", "cnt"]]
-scaled = StandardScaler().fit_transform(features)
+fig_scatter = px.scatter(filtered_df,
+                         x="temp",
+                         y="cnt",
+                         color="season",
+                         size="cnt",
+                         opacity=0.7)
+st.plotly_chart(fig_scatter, use_container_width=True)
 
-inertia = []
-K_range = range(1, 8)
-for k in K_range:
-    km = KMeans(n_clusters=k, random_state=42)
-    km.fit(scaled)
-    inertia.append(km.inertia_)
+# =========================
+# REGRESSION
+# =========================
+st.subheader("Linear Regression Temp → Rental")
 
-fig_elbow = px.line(x=list(K_range), y=inertia, markers=True)
-st.plotly_chart(fig_elbow, use_container_width=True)
+if len(filtered_df) > 10:
+    model = LinearRegression()
+    X = filtered_df[["temp"]]
+    y = filtered_df["cnt"]
+    model.fit(X,y)
+    y_pred = model.predict(X)
+
+    fig_reg = px.scatter(filtered_df, x="temp", y="cnt")
+    fig_reg.add_trace(go.Scatter(x=filtered_df["temp"], y=y_pred, name="Regression"))
+    st.plotly_chart(fig_reg, use_container_width=True)
+
+    st.success(f"Slope: {model.coef_[0]:.2f}")
+
+# =========================
+# ANOMALY DETECTION
+# =========================
+st.subheader("Deteksi Anomali (Z-Score)")
+
+filtered_df["z"] = (filtered_df["cnt"] - filtered_df["cnt"].mean()) / filtered_df["cnt"].std()
+anomaly = filtered_df[np.abs(filtered_df["z"]) > 2]
+
+fig_anom = px.scatter(filtered_df, x="dteday", y="cnt")
+if not anomaly.empty:
+    fig_anom.add_trace(go.Scatter(x=anomaly["dteday"],
+                                  y=anomaly["cnt"],
+                                  mode="markers",
+                                  name="Anomaly"))
+st.plotly_chart(fig_anom, use_container_width=True)
 
 # =========================
 # CLUSTERING
 # =========================
-st.subheader("Clustering Analysis")
+st.subheader("Clustering (KMeans)")
+
+features = filtered_df[["temp","hum","windspeed","cnt"]]
+scaled = StandardScaler().fit_transform(features)
 
 if len(filtered_df) > 5:
     kmeans = KMeans(n_clusters=cluster_k, random_state=42)
@@ -206,14 +211,25 @@ if len(filtered_df) > 5:
                              x="temp",
                              y="cnt",
                              color="Cluster",
-                             size="cnt",
-                             hover_data=["season", "hum", "windspeed"])
+                             size="cnt")
     st.plotly_chart(fig_cluster, use_container_width=True)
 
-    cluster_summary = filtered_df.groupby("Cluster")["cnt"].mean().reset_index()
+    cluster_profile = filtered_df.groupby("Cluster")[["cnt","temp","hum"]].mean().round(2)
+    st.write("Cluster Profiling:")
+    st.dataframe(cluster_profile)
 
-    st.write("Rata-rata Peminjaman per Cluster:")
-    st.dataframe(cluster_summary)
+# =========================
+# CORRELATION RANKING
+# =========================
+st.subheader("Ranking Korelasi")
+
+corr = filtered_df[["temp","hum","windspeed","cnt"]].corr()
+corr_rank = corr["cnt"].drop("cnt").abs().sort_values(ascending=False).reset_index()
+corr_rank.columns = ["Variabel","Korelasi"]
+
+fig_corr = px.bar(corr_rank, x="Variabel", y="Korelasi", text="Korelasi")
+fig_corr.update_traces(texttemplate="%{text:.2f}", textposition="outside")
+st.plotly_chart(fig_corr, use_container_width=True)
 
 # =========================
 # AUTO INSIGHT
@@ -224,7 +240,8 @@ highest_season = filtered_df.groupby("season")["cnt"].mean().idxmax()
 lowest_season = filtered_df.groupby("season")["cnt"].mean().idxmin()
 
 st.info(f"""
-• Musim dengan rata-rata peminjaman tertinggi: **{highest_season}**
-• Musim dengan rata-rata terendah: **{lowest_season}**
-• Total data dianalisis: {len(filtered_df)} hari
+• Musim tertinggi: {highest_season}  
+• Musim terendah: {lowest_season}  
+• Jumlah anomali terdeteksi: {len(anomaly)}  
+• Total data dianalisis: {len(filtered_df)} hari  
 """)
